@@ -14,12 +14,11 @@
 5. [Konnectivity — Mixed-Network Support](#5-konnectivity--mixed-network-support)
 6. [Cluster API Integration](#6-cluster-api-integration)
 7. [Lab Setup on macOS — Choosing Your Base](#7-lab-setup-on-macos--choosing-your-base)
-   - [7A. kind](#7a-kind-docker-desktop)
-   - [7B. Rancher Desktop](#7b-rancher-desktop-k3s-managed-lima-vm)
-   - [7C. Lima + K3s](#7c-lima--k3s-full-control)
-   - [7D. Common Kamaji Install](#7d-common-kamaji-install-all-base-options)
-   - [7E. Teardown](#7e-teardown-scripts)
-   - [7F. Repo Layout](#7f-recommended-repo-layout-for-github)
+   - [7A. Lima + K3s](#7a-lima--k3s-full-control)
+   - [7B. Common Kamaji Install](#7b-common-kamaji-install-all-base-options)
+   - [7C. Teardown](#7c-teardown-scripts)
+   - [7D. Repo Layout](#7d-recommended-repo-layout-for-github)
+   - [Appendix A: kind & Rancher Desktop](#appendix-a--alternative-base-options-kind--rancher-desktop)
 8. [macOS / kind MetalLB Network Workarounds](#8-macos--kind-metallb-network-workarounds)
 9. [Demo — Provision a Tenant Cluster](#9-demo--provision-a-tenant-cluster)
 10. [Joining Worker Nodes](#10-joining-worker-nodes)
@@ -277,227 +276,7 @@ With CAPI + Kamaji you get fully declarative cluster lifecycle (create, upgrade,
 
 K3s is Linux-only. Lima runs a lightweight Linux VM on macOS using Apple Virtualization.framework (`vmType: vz`), giving you a real Linux kernel — full eBPF, real cgroups, real systemd. This is the right base for a Kamaji lab on macOS.
 
-### 7A. kind (Docker Desktop)
-
-#### Prerequisites
-
-```bash
-brew install kind helm kubectl
-# Docker Desktop must be running
-```
-
-#### Create the management cluster
-
-```bash
-# scripts/setup-kind.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-CLUSTER_NAME="${CLUSTER_NAME:-kamaji-mgmt}"
-
-echo "==> Creating kind cluster: ${CLUSTER_NAME}"
-cat <<EOF | kind create cluster --name "${CLUSTER_NAME}" --config -
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-name: ${CLUSTER_NAME}
-nodes:
-  - role: control-plane
-    extraPortMappings:
-      - containerPort: 16443   # management API passthrough
-        hostPort: 16443
-        protocol: TCP
-      - containerPort: 30001   # tenant-01 TCP (NodePort option)
-        hostPort: 7443
-        protocol: TCP
-      - containerPort: 30002   # tenant-02 TCP
-        hostPort: 7444
-        protocol: TCP
-      - containerPort: 30080   # Kamaji Console
-        hostPort: 8080
-        protocol: TCP
-EOF
-
-kubectl config use-context "kind-${CLUSTER_NAME}"
-echo "==> kind cluster ready: $(kubectl get nodes --no-headers | awk '{print $1}')"
-```
-
-```bash
-chmod +x scripts/setup-kind.sh
-./scripts/setup-kind.sh
-```
-
-#### Install MetalLB
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.15.3/config/manifests/metallb-native.yaml
-kubectl rollout status daemonset/speaker -n metallb-system --timeout=120s
-
-GW_IP=$(docker network inspect -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' kind)
-NET_IP=$(echo "${GW_IP}" | sed -E 's|^([0-9]+\.[0-9]+)\..*$|\1|g')
-
-cat <<EOF | sed -E "s|172.19|${NET_IP}|g" | kubectl apply -f -
-apiVersion: metallb.io/v1beta1
-kind: IPAddressPool
-metadata:
-  name: kind-pool
-  namespace: metallb-system
-spec:
-  addresses:
-    - 172.19.255.200-172.19.255.250
----
-apiVersion: metallb.io/v1beta1
-kind: L2Advertisement
-metadata:
-  name: kind-l2
-  namespace: metallb-system
-EOF
-```
-
-> MetalLB IPs are only reachable inside the Docker VM. See §8 for the four workaround options (port-forward, docker exec, static route, or NodePort mappings).
-
-#### Install cert-manager
-
-```bash
-helm repo add jetstack https://charts.jetstack.io && helm repo update
-helm install cert-manager jetstack/cert-manager \
-  --namespace cert-manager --create-namespace \
-  --set installCRDs=true --wait
-```
-
-Then continue to **§7D**.
-
----
-
-### 7B. Rancher Desktop (K3s, managed Lima VM)
-
-Rancher Desktop bundles K3s inside a Lima VM and exposes it as your default kubeconfig context. It is the lowest-friction path to real K3s on macOS.
-
-#### Prerequisites
-
-```bash
-brew install --cask rancher
-# Also install the CLI tools
-brew install helm kubectl
-```
-
-Launch Rancher Desktop from Applications. On first run:
-
-1. **Container runtime**: select `containerd`
-2. **Kubernetes version**: pick `v1.32.x` (or latest stable)
-3. **Enable Kubernetes**: on
-4. Wait for the status bar to show "Kubernetes: Running"
-
-Or drive it entirely from the CLI with `rdctl`:
-
-```bash
-# scripts/setup-rancher.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-K8S_VERSION="${K8S_VERSION:-v1.32.4+k3s1}"
-
-echo "==> Configuring Rancher Desktop with K3s ${K8S_VERSION}"
-
-# Apply settings via rdctl (Rancher Desktop must already be installed)
-rdctl set \
-  --kubernetes.enabled=true \
-  --kubernetes.version="${K8S_VERSION}" \
-  --container-engine.name=containerd \
-  --kubernetes.options.flannel=false \
-  --kubernetes.options.traefik=false
-
-# This triggers a restart — wait for it
-echo "==> Waiting for K3s to become ready (this takes ~60s)..."
-sleep 30
-until kubectl --context rancher-desktop get nodes --no-headers 2>/dev/null | grep -q Ready; do
-  echo "  ... waiting"
-  sleep 5
-done
-
-kubectl config use-context rancher-desktop
-echo "==> Rancher Desktop K3s ready"
-kubectl get nodes -o wide
-```
-
-```bash
-chmod +x scripts/setup-rancher.sh
-./scripts/setup-rancher.sh
-```
-
-> `--kubernetes.options.flannel=false --kubernetes.options.traefik=false` disables the built-in CNI and ingress so Cilium and your own ingress take over cleanly. If you don't need Cilium for this lab, omit these flags and MetalLB will still work.
-
-#### Discover the Lima VM network
-
-Rancher Desktop's K3s node runs inside a Lima VM. The node IP is routable from your Mac:
-
-```bash
-# Get the node IP — this is directly reachable from your Mac terminal
-NODE_IP=$(kubectl --context rancher-desktop get nodes \
-  -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-echo "K3s node IP: ${NODE_IP}"
-# Typically: 192.168.5.15 or 192.168.106.x
-```
-
-#### Install MetalLB with routable pool
-
-Because the Lima VM network IS routable from your Mac, MetalLB IPs in the right subnet work directly:
-
-```bash
-# scripts/setup-metallb-rancher.sh
-#!/usr/bin/env bash
-set -euo pipefail
-
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-# Build a pool in the same /24 as the node, last 50 addresses
-NET_PREFIX=$(echo "${NODE_IP}" | cut -d. -f1-3)
-POOL_START="${NET_PREFIX}.200"
-POOL_END="${NET_PREFIX}.250"
-
-echo "==> Node IP: ${NODE_IP}"
-echo "==> MetalLB pool: ${POOL_START}-${POOL_END}"
-
-kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.15.3/config/manifests/metallb-native.yaml
-kubectl rollout status daemonset/speaker -n metallb-system --timeout=120s
-
-cat <<EOF | kubectl apply -f -
-apiVersion: metallb.io/v1beta1
-kind: IPAddressPool
-metadata:
-  name: lima-pool
-  namespace: metallb-system
-spec:
-  addresses:
-    - ${POOL_START}-${POOL_END}
----
-apiVersion: metallb.io/v1beta1
-kind: L2Advertisement
-metadata:
-  name: lima-l2
-  namespace: metallb-system
-EOF
-
-echo "==> MetalLB ready. IPs in ${POOL_START}-${POOL_END} are directly routable from your Mac."
-```
-
-```bash
-chmod +x scripts/setup-metallb-rancher.sh
-./scripts/setup-metallb-rancher.sh
-```
-
-#### Install cert-manager
-
-```bash
-helm repo add jetstack https://charts.jetstack.io && helm repo update
-helm install cert-manager jetstack/cert-manager \
-  --namespace cert-manager --create-namespace \
-  --set installCRDs=true --wait
-```
-
-Then continue to **§7D**.
-
----
-
-### 7C. Lima + K3s (full control)
+### 7A. Lima + K3s (full control)
 
 Lima is the VM layer that both Rancher Desktop and Docker Desktop use under the hood. Using it directly gives you full control over the VM spec, network, and K3s flags — and produces the most reproducible, scriptable setup.
 
@@ -614,7 +393,7 @@ alias use-k3s='export KUBECONFIG=${KUBECONFIG_K3S} && kubectl config use-context
 
 ---
 
-### 7D. Common Kamaji Install (all base options)
+### 7B. Common Kamaji Install (all base options)
 
 Once your base cluster is running — kind, Rancher Desktop, or Lima — the Kamaji install is identical. The script below detects which context is active.
 
@@ -713,7 +492,7 @@ All 12 pods running = management cluster is healthy and ready for tenant control
 
 ---
 
-### 7E. Teardown Scripts
+### 7C. Teardown Scripts
 
 ```bash
 # scripts/teardown.sh
@@ -763,7 +542,7 @@ chmod +x scripts/teardown.sh
 
 ---
 
-### 7F. Recommended repo layout for GitHub
+### 7D. Recommended repo layout for GitHub
 
 ```
 kamaji-lab/
