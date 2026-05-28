@@ -212,7 +212,7 @@ kamaji-lab/
 
 ## Author
 
-Simon Day — Senior Engineering Manager, Accenture  
+Simon Day
 Platform & DevOps Engineer | Kubernetes, GitOps, Confluent Platform
 
 *Built and documented on a MacBook Pro M3, May 2026.*
