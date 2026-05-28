@@ -1,0 +1,36 @@
+# tenant-demo.yaml — Demo TenantControlPlane
+# Apply to the management cluster:
+#   export KUBECONFIG=~/.kube/k3s-kamaji.kubeconfig
+#   kubectl create namespace tenant-demo
+#   kubectl apply -f manifests/tenants/tenant-demo.yaml
+apiVersion: kamaji.clastix.io/v1alpha1
+kind: TenantControlPlane
+metadata:
+  name: tenant-demo
+  namespace: tenant-demo
+spec:
+  dataStore: default
+  controlPlane:
+    deployment:
+      replicas: 1
+    service:
+      serviceType: LoadBalancer
+  kubernetes:
+    version: v1.32.0
+    kubelet:
+      cgroupfs: systemd
+  networkProfile:
+    port: 6443
+    certSANs:
+      - "192.168.252.1"   # Multipass gateway — update if your gateway IP differs
+    advertiseAddress: "192.168.252.1"
+  addons:
+    coreDNS: {}
+    kubeProxy: {}
+    konnectivity:
+      server:
+        port: 8132
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
