@@ -175,7 +175,7 @@ Key highlights:
 
 ## Author
 
-Simon Day — Platform & DevOps Engineer
+Simon Day — Senior Engineering Manager, Accenture
 Platform & DevOps Engineer | Kubernetes, GitOps, Confluent Platform
 
 *Built on macOS M3, May 2026.*
