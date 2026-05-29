@@ -244,7 +244,18 @@ kubectl get tcp -n tenant-demo -w
 # tenant-demo   v1.30.2   Ready    172.18.255.200:6443      tenant-demo-admin-kubeconfig   default     19s
 ```
 
-> **Kubernetes version constraint:** Kamaji validates that TCP versions don't exceed the management cluster version. Use `v1.30.2` with a kind v1.34 management cluster.
+> **Kubernetes version — management vs tenant:**
+> The management cluster (kind v1.34) and tenant cluster (v1.30.2) intentionally run different Kubernetes versions — this is by design, not a limitation.
+>
+> | | Version | Role |
+> |---|---|---|
+> | Management cluster | v1.34.0 | Runs Kamaji operator and TCP control plane pods |
+> | Tenant cluster (TCP) | v1.30.2 | What workers join and users interact with |
+>
+> Kamaji's admission webhook enforces that the TCP version does not exceed the management cluster version. With kind v1.34, you can use any TCP version up to v1.34 — however the current Kamaji chart validates and supports up to `v1.30.2`. Attempting `v1.32+` will be rejected:
+> ```
+> unable to create a TenantControlPlane with a Kubernetes version greater than the supported one, actually 1.30.2
+> ```
 
 ### 5.2 Extract kubeconfig and connect
 
@@ -830,7 +841,7 @@ source ~/.zshrc
 
 | Issue | Cause | Fix |
 |---|---|---|
-| TCP version > management cluster version rejected | Kamaji webhook validates K8s version | Use `v1.30.2` with kind v1.34 management cluster |
+| TCP version > management cluster version rejected | Kamaji webhook validates TCP version ≤ management cluster version. This is by design — not a bug. The management cluster runs control plane pods; the TCP version is what workers and users see. They are intentionally decoupled. | Use `v1.30.2` for TCP with kind v1.34 management cluster. Attempting `v1.32+` is rejected with: `unable to create a TenantControlPlane with a Kubernetes version greater than the supported one` |
 | Kamaji fails with `TLSRoute CRD not found` | Latest Kamaji watches Gateway API resources | Install experimental Gateway API CRDs before Kamaji |
 | MetalLB IP not reachable from Mac | kind Docker network not routed to Mac host | Use `kubectl port-forward` for all tenant access |
 | `kubeadm join` hangs on cluster-info | Kamaji TCPs don't create JWS-signed cluster-info ConfigMap | Don't use `kubeadm join` — configure kubelet directly |
