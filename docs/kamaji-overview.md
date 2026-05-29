@@ -495,7 +495,32 @@ kubectl patch capsuleconfiguration default --type=merge \
   -p '{"spec":{"forceTenantPrefix":true}}'
 ```
 
-### 7.3 Create Team Alpha tenant
+### 7.3 Quota reconciliation
+
+Capsule v0.13.0 has a reconciliation lag between namespace creation and `status.size` update. The validating webhook reads `status.size` for quota checks — if this is stale, quota won't be enforced.
+
+**After install or any quota change, always restart the controller:**
+
+```bash
+kubectl rollout restart deployment/capsule-controller-manager -n capsule-system
+kubectl rollout status deployment/capsule-controller-manager -n capsule-system
+```
+
+**Patching an existing tenant quota:**
+
+```bash
+kubectl patch tenant team-alpha --type=merge -p '{"spec":{"namespaceOptions":{"quota":5}}}'
+
+# Force immediate reconciliation
+kubectl rollout restart deployment/capsule-controller-manager -n capsule-system
+
+# Or trigger reconcile without restart
+kubectl annotate tenant team-alpha reconcile-trigger="$(date +%s)" --overwrite
+```
+
+The `setup-capsule.sh` script handles the initial restart automatically.
+
+### 7.4 Create Team Alpha tenant
 
 ```bash
 kubectl apply -f - <<'EOF'
@@ -525,7 +550,7 @@ kubectl create clusterrolebinding capsule-alice-provisioner \
 kubectl get tenants
 ```
 
-### 7.4 Demo — Tenant isolation and quota enforcement
+### 7.5 Demo — Tenant isolation and quota enforcement
 
 ```bash
 # Alice creates namespaces (must use group: projectcapsule.dev)
@@ -550,7 +575,7 @@ kubectl --as=alice --as-group=projectcapsule.dev create namespace frontend
 # Error: The Namespace name must start with 'team-alpha-'
 ```
 
-### 7.5 Create Team Beta — second tenant with isolation demo
+### 7.6 Create Team Beta — second tenant with isolation demo
 
 ```bash
 kubectl apply -f - <<'EOF'
@@ -588,7 +613,7 @@ kubectl --as=bob --as-group=projectcapsule.dev create namespace team-beta-worker
 kubectl get namespaces -l capsule.clastix.io/tenant=team-beta
 ```
 
-### 7.6 Isolation verification
+### 7.7 Isolation verification
 
 ```bash
 # Bob can list his namespaces
@@ -612,7 +637,7 @@ kubectl get tenants
 # team-beta    Active   3                 2                 True
 ```
 
-### 7.7 Deploy workloads as a tenant user
+### 7.8 Deploy workloads as a tenant user
 
 ```bash
 # Bob grants his developer (charlie) access to team-beta-api
@@ -661,7 +686,7 @@ kubectl --as=charlie get pods -n team-beta-api
 # nginx-xxx                1/1     Running   0          10s
 ```
 
-### 7.8 Scoped kubeconfig for tenant users
+### 7.9 Scoped kubeconfig for tenant users
 
 In production, give each tenant user their own kubeconfig scoped to their namespaces:
 
@@ -788,3 +813,5 @@ source ~/.zshrc
 | Capsule quota not enforced | `forceTenantPrefix` not enabled | Patch CapsuleConfiguration: `forceTenantPrefix: true` |
 | Capsule webhook not intercepting | Wrong group used | Use `--as-group=projectcapsule.dev` not `capsule.clastix.io` |
 | Capsule secret key error | Secret uses `NEXTAUTH_SECRET` instead of `JWT_SECRET` | Create secret with `JWT_SECRET` key |
+| Capsule quota not enforced after install | `status.size` reconciliation lag — webhook reads stale count | Restart controller after install: `kubectl rollout restart deployment/capsule-controller-manager -n capsule-system` |
+| Capsule quota not enforced after patch | Same reconciliation lag after changing quota value | Restart controller or trigger reconcile: `kubectl annotate tenant <name> reconcile-trigger="$(date +%s)" --overwrite` |
