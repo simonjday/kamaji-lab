@@ -6,7 +6,16 @@
 
 export KUBECONFIG_MGMT="${HOME}/.kube/config"
 
-alias use-mgmt='kubectl config use-context kind-kamaji-mgmt && echo "==> Management: $(kubectl config current-context)"'
+function use-mgmt() {
+  export KUBECONFIG="${HOME}/.kube/config"
+  # Re-export kind context if missing (lost after teardown/restart)
+  if ! kubectl config get-contexts kind-kamaji-mgmt &>/dev/null 2>&1; then
+    kind export kubeconfig --name kamaji-mgmt 2>/dev/null || true
+  fi
+  kubectl config use-context kind-kamaji-mgmt 2>/dev/null ||     echo "ERROR: kind-kamaji-mgmt context not found. Run: kind export kubeconfig --name kamaji-mgmt"
+  echo "==> Management: $(kubectl config current-context 2>/dev/null)"
+}
+
 
 function use-tenant() {
   local TCP=${1:?"Usage: use-tenant <tcp-name> [namespace] [port]"}
