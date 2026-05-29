@@ -1,59 +1,73 @@
 #!/usr/bin/env bash
 # teardown.sh — Destroy the Kamaji lab environment
-# Usage: ./teardown.sh <kind|rancher|lima> [cluster/vm-name]
-#   ./teardown.sh kind kamaji-mgmt
-#   ./teardown.sh lima kamaji-k3s
-#   ./teardown.sh rancher
+#
+# Usage:
+#   ./scripts/teardown.sh           — full teardown (cluster + worker + kubeconfigs)
+#   ./scripts/teardown.sh cluster   — delete kind cluster only
+#   ./scripts/teardown.sh worker    — delete Docker worker container only
+#   ./scripts/teardown.sh configs   — remove kubeconfigs only
+
 set -euo pipefail
 
-BASE="${1:-kind}"
-NAME="${2:-}"
+MODE="${1:-all}"
+CLUSTER_NAME="kamaji-mgmt"
+WORKER_NAME="kamaji-worker-01"
 
-case "${BASE}" in
+teardown_cluster() {
+  echo "==> Deleting kind cluster: ${CLUSTER_NAME}"
+  if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
+    kind delete cluster --name "${CLUSTER_NAME}"
+    echo "==> Kind cluster deleted"
+  else
+    echo "==> Kind cluster '${CLUSTER_NAME}' not found — skipping"
+  fi
+}
 
-  kind)
-    CLUSTER="${NAME:-kamaji-mgmt}"
-    echo "==> Deleting kind cluster: ${CLUSTER}"
-    kind delete cluster --name "${CLUSTER}"
-    echo "==> Done"
-    ;;
+teardown_worker() {
+  echo "==> Removing Docker worker container: ${WORKER_NAME}"
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${WORKER_NAME}$"; then
+    docker rm -f "${WORKER_NAME}"
+    echo "==> Worker container removed"
+  else
+    echo "==> Worker container '${WORKER_NAME}' not found — skipping"
+  fi
+}
 
-  lima)
-    VM="${NAME:-kamaji-k3s}"
-    KUBECONFIG_PATH="${HOME}/.kube/k3s-kamaji.kubeconfig"
-    echo "==> Stopping Lima VM: ${VM}"
-    limactl stop "${VM}" 2>/dev/null || true
-    echo "==> Deleting Lima VM: ${VM}"
-    limactl delete "${VM}"
-    if [ -f "${KUBECONFIG_PATH}" ]; then
-      rm -f "${KUBECONFIG_PATH}"
-      echo "==> Removed kubeconfig: ${KUBECONFIG_PATH}"
-    fi
-    echo "==> Done"
-    ;;
+teardown_configs() {
+  echo "==> Removing kubeconfigs"
+  rm -f "${HOME}/.kube/tenant-demo.kubeconfig" \
+        "${HOME}/.kube/tenant-demo-local.kubeconfig"
+  kubectl config delete-context "kind-${CLUSTER_NAME}" 2>/dev/null || true
+  kubectl config delete-cluster "kind-${CLUSTER_NAME}" 2>/dev/null || true
+  echo "==> Kubeconfigs removed"
+}
 
-  rancher)
-    echo "==> Resetting Rancher Desktop Kubernetes cluster"
-    echo "    This deletes all workloads and resets to factory state."
-    read -rp "    Are you sure? (yes/no): " CONFIRM
-    if [ "${CONFIRM}" != "yes" ]; then
-      echo "Aborted."
-      exit 0
-    fi
-    rdctl set --kubernetes.enabled=false
-    sleep 5
-    rdctl set --kubernetes.enabled=true
-    echo "==> Done — Rancher Desktop cluster reset"
-    ;;
-
-  *)
-    echo "Usage: $0 <kind|rancher|lima> [cluster/vm-name]"
+case "${MODE}" in
+  all)
+    echo "==> Full teardown: kind cluster + Docker worker + kubeconfigs"
+    teardown_worker
+    teardown_cluster
+    teardown_configs
     echo ""
-    echo "Examples:"
-    echo "  $0 kind kamaji-mgmt"
-    echo "  $0 lima kamaji-k3s"
-    echo "  $0 rancher"
+    echo "==> Teardown complete. To rebuild:"
+    echo "    ./scripts/setup-kind-kamaji.sh"
+    ;;
+  cluster)
+    teardown_cluster
+    ;;
+  worker)
+    teardown_worker
+    ;;
+  configs)
+    teardown_configs
+    ;;
+  *)
+    echo "Usage: $0 [all|cluster|worker|configs]"
+    echo ""
+    echo "  all     — delete kind cluster, Docker worker, and kubeconfigs (default)"
+    echo "  cluster — delete kind cluster only"
+    echo "  worker  — delete Docker worker container only"
+    echo "  configs — remove tenant kubeconfigs only"
     exit 1
     ;;
-
 esac
