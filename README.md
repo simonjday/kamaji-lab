@@ -65,21 +65,19 @@ kubectl get tcp -n tenant-demo -w
 kubectl get secret tenant-demo-admin-kubeconfig   -n tenant-demo -o jsonpath='{.data.admin\.conf}' | base64 -d   > ~/.kube/tenant-demo.kubeconfig
 sed 's|https://172.18.255.200:6443|https://127.0.0.1:7443|g'   ~/.kube/tenant-demo.kubeconfig > ~/.kube/tenant-demo-local.kubeconfig
 
-# 4. Join worker node
-./scripts/setup-worker-kind.sh tenant-demo tenant-demo
-
-# 4. Source shell helpers
+# 4. Source shell helpers (do this once)
 echo 'source "$(pwd)/scripts/shell-helpers.zsh"' >> ~/.zshrc
 source ~/.zshrc
 
-# Switch between clusters
-use-mgmt                  # management cluster
-use-tenant tenant-demo    # tenant cluster (starts port-forward)
+# 5. Join worker node  [management cluster]
+export KUBECONFIG=~/.kube/config
+./scripts/setup-worker-kind.sh tenant-demo tenant-demo
 
-# 5. Install Capsule (multi-tenancy)
-./scripts/setup-capsule.sh
+# 6. Install Capsule   [tenant cluster]
+./scripts/setup-capsule.sh ~/.kube/tenant-demo-local.kubeconfig
 
-# 6. Install Kamaji Console (web UI)
+# 7. Install Kamaji Console  [management cluster]
+export KUBECONFIG=~/.kube/config
 ./scripts/setup-kamaji-console.sh
 kamaji-ui
 ```
