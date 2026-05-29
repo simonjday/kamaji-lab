@@ -1,0 +1,18 @@
+# team-alpha Tenant — 3 namespace quota, alice as owner
+apiVersion: capsule.clastix.io/v1beta2
+kind: Tenant
+metadata:
+  name: team-alpha
+spec:
+  owners:
+    - name: alice
+      kind: User
+  namespaceOptions:
+    quota: 3
+  resourceQuotas:
+    scope: Tenant
+    items:
+      - hard:
+          requests.cpu: "4"
+          requests.memory: 8Gi
+          pods: "20"

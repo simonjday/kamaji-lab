@@ -1,8 +1,10 @@
-# tenant-demo.yaml — Demo TenantControlPlane
-# Apply to the management cluster:
-#   export KUBECONFIG=~/.kube/k3s-kamaji.kubeconfig
+# tenant-demo.yaml — Demo TenantControlPlane for kind management cluster
+# Apply with:
 #   kubectl create namespace tenant-demo
 #   kubectl apply -f manifests/tenants/tenant-demo.yaml
+#
+# NOTE: Kamaji validates TCP K8s version <= management cluster version
+# With kind v1.34 management cluster, use v1.30.x for the TCP
 apiVersion: kamaji.clastix.io/v1alpha1
 kind: TenantControlPlane
 metadata:
@@ -16,14 +18,13 @@ spec:
     service:
       serviceType: LoadBalancer
   kubernetes:
-    version: v1.32.0
+    version: v1.30.2
     kubelet:
       cgroupfs: systemd
   networkProfile:
     port: 6443
     certSANs:
-      - "192.168.252.1"   # Multipass gateway — update if your gateway IP differs
-    advertiseAddress: "192.168.252.1"
+      - "127.0.0.1"
   addons:
     coreDNS: {}
     kubeProxy: {}

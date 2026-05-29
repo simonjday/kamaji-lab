@@ -1,0 +1,18 @@
+# team-beta Tenant — 3 namespace quota, bob as owner
+apiVersion: capsule.clastix.io/v1beta2
+kind: Tenant
+metadata:
+  name: team-beta
+spec:
+  owners:
+    - name: bob
+      kind: User
+  namespaceOptions:
+    quota: 3
+  resourceQuotas:
+    scope: Tenant
+    items:
+      - hard:
+          requests.cpu: "2"
+          requests.memory: 4Gi
+          pods: "10"
