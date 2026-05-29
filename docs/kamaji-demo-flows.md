@@ -303,11 +303,18 @@ kubectl get tcp tenant-demo -n tenant-demo
 # v1.30.2   v1.30.2             Ready
 ```
 
-**Trigger the upgrade:**
+> **Version constraint in this lab:** Kamaji v1.0.0 with kind v1.34 management cluster supports TCP versions up to `v1.30.2` only. Attempting to set `v1.30.9` or higher is rejected by the admission webhook with:
+> ```
+> unable to upgrade to a version greater than the supported one, actually 1.30.2
+> ```
+> In a production environment with a newer Kamaji and management cluster you would patch to any supported version. The upgrade mechanism shown below is accurate — only the version numbers differ.
+
+**What the upgrade looks like (production):**
 
 ```bash
+# In a production Kamaji environment supporting v1.32.x:
 kubectl patch tcp tenant-demo -n tenant-demo --type=merge \
-  -p '{"spec":{"kubernetes":{"version":"v1.30.9"}}}'
+  -p '{"spec":{"kubernetes":{"version":"v1.32.5"}}}'
 
 # Watch Kamaji roll the control plane
 kubectl get tcp -n tenant-demo -w
@@ -315,7 +322,27 @@ kubectl get tcp -n tenant-demo -w
 # Takes ~30-60 seconds
 
 kubectl get pods -n tenant-demo -w
-# Old pod terminated, new pod starts with v1.30.9 images
+# Old pod terminated, new pod starts with v1.32.5 images
+```
+
+**What you CAN demo in this lab — replica scaling (shows same reconcile pattern):**
+
+```bash
+# Scale the TCP control plane from 1 to 2 replicas
+kubectl patch tcp tenant-demo -n tenant-demo --type=merge \
+  -p '{"spec":{"controlPlane":{"deployment":{"replicas":2}}}}'
+
+# Watch Kamaji add the second replica
+kubectl get pods -n tenant-demo -w
+# tenant-demo-xxx-1   4/4   Running
+# tenant-demo-xxx-2   4/4   Running  ← new replica
+
+kubectl get tcp -n tenant-demo
+# Shows 2/2 pods
+
+# Scale back down
+kubectl patch tcp tenant-demo -n tenant-demo --type=merge \
+  -p '{"spec":{"controlPlane":{"deployment":{"replicas":1}}}}'
 ```
 
 **Verify from tenant cluster:**
