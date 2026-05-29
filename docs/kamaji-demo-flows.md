@@ -265,6 +265,27 @@ helm upgrade capsule-proxy projectcapsule/capsule-proxy \
   --set "options.oidcUsernameClaim=preferred_username"
 ```
 
+**Reset after demo:**
+
+```bash
+# Uninstall Capsule Proxy
+helm uninstall capsule-proxy -n capsule-system
+
+# Remove ServiceAccount and bindings created for the demo
+kubectl delete serviceaccount alice -n team-alpha-frontend 2>/dev/null || true
+kubectl delete clusterrolebinding alice-sa-provisioner 2>/dev/null || true
+
+# Remove alice as ServiceAccount owner from team-alpha tenant
+kubectl patch tenant team-alpha --type=json -p '[{"op": "remove", "path": "/spec/owners/1"}]'
+
+# Remove alice proxy kubeconfig
+rm -f ~/.kube/alice-proxy.kubeconfig
+
+# Verify clean state
+kubectl get pods -n capsule-system
+kubectl get tenants
+```
+
 ---
 
 ## 4. Kamaji — TCP In-Place Upgrade
