@@ -42,6 +42,12 @@ echo "==> K8s:      ${K8S_VERSION}"
 echo "==> Worker:   ${WORKER_NAME}"
 
 # ── Ensure tenant kubeconfig and port-forward ──────────────────────────────────
+# Validate existing kubeconfig has the right server — regenerate if corrupt/wrong
+if [ -f "${TENANT_KUBECONFIG}" ] && ! grep -q "server:" "${TENANT_KUBECONFIG}" 2>/dev/null; then
+  echo "WARNING: Tenant kubeconfig is corrupt — regenerating"
+  rm -f "${TENANT_KUBECONFIG}"
+fi
+
 if [ ! -f "${TENANT_KUBECONFIG}" ]; then
   echo "==> Extracting tenant kubeconfig"
 

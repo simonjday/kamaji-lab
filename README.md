@@ -50,7 +50,7 @@ git clone https://github.com/simonjday/kamaji-lab
 cd kamaji-lab
 chmod +x scripts/*.sh
 
-# 1. Create kind cluster
+# 1. Create management cluster
 ./scripts/setup-kind-kamaji.sh
 kind export kubeconfig --name kamaji-mgmt
 export KUBECONFIG=~/.kube/config
@@ -61,7 +61,11 @@ kubectl create namespace tenant-demo
 kubectl apply -f manifests/tenants/tenant-demo.yaml
 kubectl get tcp -n tenant-demo -w
 
-# 3. Join worker node
+# 3. Extract tenant kubeconfig
+kubectl get secret tenant-demo-admin-kubeconfig   -n tenant-demo -o jsonpath='{.data.admin\.conf}' | base64 -d   > ~/.kube/tenant-demo.kubeconfig
+sed 's|https://172.18.255.200:6443|https://127.0.0.1:7443|g'   ~/.kube/tenant-demo.kubeconfig > ~/.kube/tenant-demo-local.kubeconfig
+
+# 4. Join worker node
 ./scripts/setup-worker-kind.sh tenant-demo tenant-demo
 
 # 4. Source shell helpers
@@ -81,12 +85,6 @@ kamaji-ui
 ```
 
 ---
-
-## Documentation
-
-Full guide including architecture, manual steps, known issues and Capsule demo:
-
-📄 [docs/kamaji-overview.md](docs/kamaji-overview.md)
 
 ## Tested On
 
@@ -183,7 +181,7 @@ Key highlights:
 
 ## Author
 
-Simon Day | Platform & DevOps Engineer  
-Kubernetes, GitOps, Confluent Platform  
+Simon Day — Platform & DevOps Engineer
+Platform & DevOps Engineer | Kubernetes, GitOps, Confluent Platform
 
 *Built on macOS M3, May 2026.*
