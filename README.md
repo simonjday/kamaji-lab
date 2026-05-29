@@ -80,6 +80,12 @@ kamaji-ui
 
 ---
 
+## Documentation
+
+Full guide including architecture, manual steps, known issues and Capsule demo:
+
+📄 [docs/kamaji-overview.md](docs/kamaji-overview.md)
+
 ## Tested On
 
 | Component | Version |
