@@ -57,12 +57,23 @@ echo "==> Step 2/5: Installing MetalLB ${METALLB_VERSION}"
 kubectl apply -f "https://raw.githubusercontent.com/metallb/metallb/${METALLB_VERSION}/config/manifests/metallb-native.yaml"
 kubectl rollout status daemonset/speaker -n metallb-system --timeout=120s
 
-# Detect Docker kind network gateway
-DOCKER_GATEWAY=$(docker network inspect kind -f '{{range .IPAM.Config}}{{.Gateway}}{{end}}' \
-  | grep -oE '([0-9]+\.){3}[0-9]+' | head -1)
-NET_PREFIX=$(echo "${DOCKER_GATEWAY}" | cut -d. -f1-2)
+# Detect Docker kind network IPv4 subnet
+# Output example: "fc00:f853:ccd:e793::/64 172.18.0.0/16"
+# Extract the IPv4 CIDR (contains dots, not colons)
+IPV4_SUBNET=$(docker network inspect kind \
+  --format '{{range .IPAM.Config}}{{if .Subnet}}{{.Subnet}} {{end}}{{end}}' | \
+  tr ' ' '\n' | grep '\.' | grep -v ':' | head -1 | tr -d '[:space:]')
 
-echo "==> Docker gateway: ${DOCKER_GATEWAY}"
+if [ -z "${IPV4_SUBNET}" ]; then
+  echo "ERROR: Could not detect kind network IPv4 subnet"
+  echo "       Run: docker network inspect kind --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'"
+  exit 1
+fi
+
+# Derive pool range from subnet (e.g. 172.18.0.0/16 → 172.18.255.200-172.18.255.250)
+NET_PREFIX=$(echo "${IPV4_SUBNET}" | cut -d. -f1-2)
+echo "==> Kind network subnet: ${IPV4_SUBNET}"
+
 echo "==> MetalLB pool: ${NET_PREFIX}.255.200-${NET_PREFIX}.255.250"
 
 kubectl apply -f - <<EOF

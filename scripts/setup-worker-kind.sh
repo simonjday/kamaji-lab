@@ -146,6 +146,11 @@ echo "==> Step 4/6: Configuring kubelet"
 
 HOSTNAME=$(docker exec "${WORKER_NAME}" hostname)
 
+# Copy CA cert into worker container first
+echo "${CA_DATA}" | base64 -d > /tmp/worker-ca.crt
+docker exec "${WORKER_NAME}" mkdir -p /etc/kubernetes/pki
+docker cp /tmp/worker-ca.crt "${WORKER_NAME}:/etc/kubernetes/pki/ca.crt"
+
 # Write bootstrap-kubelet.conf
 cat > /tmp/bootstrap-kubelet.conf << EOF
 apiVersion: v1
@@ -170,6 +175,27 @@ EOF
 
 docker cp /tmp/bootstrap-kubelet.conf \
   "${WORKER_NAME}:/etc/kubernetes/bootstrap-kubelet.conf"
+
+# Create minimal kubelet config.yaml (required for kubelet to start)
+docker exec "${WORKER_NAME}" bash -c "
+  mkdir -p /var/lib/kubelet
+  cat > /var/lib/kubelet/config.yaml <<'KUBECFG'
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: systemd
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+  x509:
+    clientCAFile: /etc/kubernetes/pki/ca.crt
+authorization:
+  mode: Webhook
+clusterDNS:
+  - 10.96.0.10
+clusterDomain: cluster.local
+KUBECFG"
 
 # Disable swap check and restart kubelet
 docker exec "${WORKER_NAME}" bash -c "

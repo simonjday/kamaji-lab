@@ -42,13 +42,20 @@ helm install capsule projectcapsule/capsule \
   --create-namespace \
   --wait 2>/dev/null || true
 
-# Helm may report failure due to --wait timeout — check pods directly
-sleep 5
-if ! kubectl get pods -n capsule-system 2>/dev/null | grep -q Running; then
-  echo "ERROR: Capsule pods not running"
-  kubectl get pods -n capsule-system
-  exit 1
-fi
+# Wait for Capsule controller to be Running (ignore Completed CRD job)
+echo "==> Waiting for Capsule controller to be Ready"
+TIMEOUT=60
+ELAPSED=0
+until kubectl get pods -n capsule-system --no-headers 2>/dev/null | \
+    grep "capsule-controller-manager" | grep -q "Running"; do
+  if [ "${ELAPSED}" -ge "${TIMEOUT}" ]; then
+    echo "ERROR: Capsule controller not running after ${TIMEOUT}s"
+    kubectl get pods -n capsule-system
+    exit 1
+  fi
+  sleep 3
+  ELAPSED=$((ELAPSED + 3))
+done
 
 echo "==> Capsule running"
 

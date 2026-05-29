@@ -9,12 +9,17 @@ ADMIN_EMAIL="${1:-admin@lab.local}"
 ADMIN_PASSWORD="${2:-admin123}"
 LOCAL_PORT="${3:-8080}"
 NAMESPACE="kamaji-system"
+MGMT_KUBECONFIG="${HOME}/.kube/config"
 
 echo "==> Installing Kamaji Console"
 echo "    Email:    ${ADMIN_EMAIL}"
 echo "    Password: ${ADMIN_PASSWORD}"
 echo "    Port:     ${LOCAL_PORT}"
 echo ""
+
+# Always target management cluster
+export KUBECONFIG="${MGMT_KUBECONFIG}"
+kubectl config use-context kind-kamaji-mgmt 2>/dev/null || true
 
 if echo "${ADMIN_PASSWORD}" | grep -qE '[^a-zA-Z0-9]'; then
   echo "WARNING: Password contains non-alphanumeric characters — may cause auth failure"
