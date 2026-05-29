@@ -50,11 +50,13 @@ git clone https://github.com/simonjday/kamaji-lab
 cd kamaji-lab
 chmod +x scripts/*.sh
 
-# 1. Create management cluster
+# 1. Create kind cluster
 ./scripts/setup-kind-kamaji.sh
+kind export kubeconfig --name kamaji-mgmt
+export KUBECONFIG=~/.kube/config
+kubectl get nodes
 
 # 2. Create tenant control plane
-export KUBECONFIG=~/.kube/config
 kubectl create namespace tenant-demo
 kubectl apply -f manifests/tenants/tenant-demo.yaml
 kubectl get tcp -n tenant-demo -w
