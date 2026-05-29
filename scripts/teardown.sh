@@ -2,16 +2,17 @@
 # teardown.sh — Destroy the Kamaji lab environment
 #
 # Usage:
-#   ./scripts/teardown.sh           — full teardown (cluster + worker + kubeconfigs)
-#   ./scripts/teardown.sh cluster   — delete kind cluster only
-#   ./scripts/teardown.sh worker    — delete Docker worker container only
-#   ./scripts/teardown.sh configs   — remove kubeconfigs only
+#   ./scripts/teardown.sh                        — full teardown (cluster + all workers + kubeconfigs)
+#   ./scripts/teardown.sh cluster                — delete kind cluster only
+#   ./scripts/teardown.sh worker                 — delete default worker (kamaji-worker-01)
+#   ./scripts/teardown.sh worker kamaji-worker-02 — delete a specific worker
+#   ./scripts/teardown.sh configs                — remove kubeconfigs only
 
 set -euo pipefail
 
 MODE="${1:-all}"
 CLUSTER_NAME="kamaji-mgmt"
-WORKER_NAME="kamaji-worker-01"
+DEFAULT_WORKER="kamaji-worker-01"
 
 teardown_cluster() {
   echo "==> Deleting kind cluster: ${CLUSTER_NAME}"
@@ -24,12 +25,27 @@ teardown_cluster() {
 }
 
 teardown_worker() {
-  echo "==> Removing Docker worker container: ${WORKER_NAME}"
-  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${WORKER_NAME}$"; then
-    docker rm -f "${WORKER_NAME}"
-    echo "==> Worker container removed"
+  local NAME="${1:-${DEFAULT_WORKER}}"
+  echo "==> Removing Docker worker container: ${NAME}"
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${NAME}$"; then
+    docker rm -f "${NAME}"
+    echo "==> Worker container '${NAME}' removed"
   else
-    echo "==> Worker container '${WORKER_NAME}' not found — skipping"
+    echo "==> Worker container '${NAME}' not found — skipping"
+  fi
+}
+
+teardown_all_workers() {
+  # Find and remove all kamaji-worker-* containers
+  local WORKERS
+  WORKERS=$(docker ps -a --format '{{.Names}}' 2>/dev/null | grep '^kamaji-worker-' || true)
+  if [ -z "${WORKERS}" ]; then
+    echo "==> No kamaji-worker-* containers found — skipping"
+  else
+    echo "${WORKERS}" | while read -r W; do
+      echo "==> Removing worker container: ${W}"
+      docker rm -f "${W}"
+    done
   fi
 }
 
@@ -44,8 +60,8 @@ teardown_configs() {
 
 case "${MODE}" in
   all)
-    echo "==> Full teardown: kind cluster + Docker worker + kubeconfigs"
-    teardown_worker
+    echo "==> Full teardown: kind cluster + all workers + kubeconfigs"
+    teardown_all_workers
     teardown_cluster
     teardown_configs
     echo ""
@@ -56,18 +72,25 @@ case "${MODE}" in
     teardown_cluster
     ;;
   worker)
-    teardown_worker
+    # Optional second arg is the worker name
+    teardown_worker "${2:-${DEFAULT_WORKER}}"
     ;;
   configs)
     teardown_configs
     ;;
   *)
-    echo "Usage: $0 [all|cluster|worker|configs]"
+    echo "Usage: $0 [all|cluster|worker|configs] [worker-name]"
     echo ""
-    echo "  all     — delete kind cluster, Docker worker, and kubeconfigs (default)"
-    echo "  cluster — delete kind cluster only"
-    echo "  worker  — delete Docker worker container only"
-    echo "  configs — remove tenant kubeconfigs only"
+    echo "  all                          — delete kind cluster, all workers, and kubeconfigs (default)"
+    echo "  cluster                      — delete kind cluster only"
+    echo "  worker                       — delete default worker (${DEFAULT_WORKER})"
+    echo "  worker kamaji-worker-02      — delete a specific worker container"
+    echo "  configs                      — remove tenant kubeconfigs only"
+    echo ""
+    echo "Examples:"
+    echo "  $0                           # full teardown"
+    echo "  $0 worker                    # remove kamaji-worker-01"
+    echo "  $0 worker kamaji-worker-02   # remove kamaji-worker-02"
     exit 1
     ;;
 esac

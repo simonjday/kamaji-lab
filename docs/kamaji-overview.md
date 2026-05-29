@@ -459,6 +459,36 @@ kubectl get pods -A
 # All Running
 ```
 
+### 6.7 Adding additional worker nodes
+
+The `setup-worker-kind.sh` script accepts an optional worker name — run it again with a different name to join a second node:
+
+```bash
+./scripts/setup-worker-kind.sh tenant-demo tenant-demo kamaji-worker-02
+```
+
+Verify:
+
+```bash
+export KUBECONFIG=~/.kube/tenant-demo-local.kubeconfig
+kubectl get nodes
+# NAME        STATUS   ROLES    AGE   VERSION
+# worker-01   Ready    <none>   1h    v1.30.2
+# worker-02   Ready    <none>   30s   v1.30.2
+```
+
+Each worker gets its own bootstrap token and joins independently. The hostname inside Kubernetes is derived from the container name — `kamaji-worker-02` registers as `worker-02`.
+
+To remove a worker:
+
+```bash
+./scripts/teardown.sh worker kamaji-worker-02
+# Then drain the node first
+export KUBECONFIG=~/.kube/tenant-demo-local.kubeconfig
+kubectl drain worker-02 --ignore-daemonsets --delete-emptydir-data
+kubectl delete node worker-02
+```
+
 ---
 
 ## 7. Capsule Multi-Tenancy
