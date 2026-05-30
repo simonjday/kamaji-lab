@@ -1067,15 +1067,42 @@ lsof -ti:9091 | xargs kill -9 2>/dev/null || true
 ```bash
 use-mgmt
 
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update prometheus-community
+
 helm install mgmt-monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
   --create-namespace \
   --set grafana.adminPassword=admin123 \
   --set alertmanager.enabled=false \
-  --wait
+  --wait --timeout=300s
+
+kubectl get pods -n monitoring
+```
+
+**Copy etcd certs to monitoring namespace** (Prometheus can only mount secrets from its own namespace):
+
+```bash
+kubectl get secret etcd-certs -n kamaji-system -o yaml | \
+  sed 's/namespace: kamaji-system/namespace: monitoring/' | \
+  kubectl apply -f -
+```
+
+**Patch Prometheus to mount the etcd certs:**
+
+```bash
+kubectl patch prometheus mgmt-monitoring-kube-prome-prometheus \
+  -n monitoring --type=merge -p '{
+  "spec": {
+    "secrets": ["etcd-certs"]
+  }
+}'
 ```
 
 **Create ServiceMonitor for kamaji-etcd:**
+
+> **Note:** The etcd service labels are `app.kubernetes.io/name=kamaji` and `app.kubernetes.io/components=etcd`, not `app.kubernetes.io/name=etcd`.
+> The cert files in the secret are `server.pem` and `server-key.pem`.
 
 ```bash
 kubectl apply -f - <<'EOF'
@@ -1092,44 +1119,84 @@ spec:
       - kamaji-system
   selector:
     matchLabels:
-      app.kubernetes.io/name: etcd
+      app.kubernetes.io/name: kamaji
+      app.kubernetes.io/components: etcd
   endpoints:
     - port: client
       scheme: https
       tlsConfig:
-        caFile: /etc/prometheus/secrets/kamaji-etcd-certs/ca.crt
-        certFile: /etc/prometheus/secrets/kamaji-etcd-certs/tls.crt
-        keyFile: /etc/prometheus/secrets/kamaji-etcd-certs/tls.key
+        caFile: /etc/prometheus/secrets/etcd-certs/ca.crt
+        certFile: /etc/prometheus/secrets/etcd-certs/server.pem
+        keyFile: /etc/prometheus/secrets/etcd-certs/server-key.pem
         insecureSkipVerify: true
       interval: 15s
 EOF
 ```
 
-**Access Grafana:**
+**Restart Prometheus to pick up the new config:**
+
+```bash
+kubectl delete pod prometheus-mgmt-monitoring-kube-prome-prometheus-0 -n monitoring
+kubectl wait --for=condition=Ready pod \
+  prometheus-mgmt-monitoring-kube-prome-prometheus-0 \
+  -n monitoring --timeout=120s
+```
+
+**Verify etcd targets are UP:**
+
+```bash
+kubectl port-forward svc/mgmt-monitoring-kube-prome-prometheus \
+  -n monitoring 9092:9090 &
+sleep 2
+open "http://localhost:9092/targets?search=kamaji"
+# serviceMonitor/monitoring/kamaji-etcd/0 — 3/3 up
+```
+
+**Access Grafana and explore etcd metrics:**
 
 ```bash
 kubectl port-forward svc/mgmt-monitoring-grafana -n monitoring 3001:80 &
-open http://localhost:3001
+sleep 2
+open http://localhost:3001/explore
 # Login: admin / admin123
+# Select Prometheus datasource
 ```
 
-**Import etcd dashboard:**
+> **Dashboard 3070 note:** The etcd dashboard 3070 has variable binding issues in newer Grafana versions — panels show N/A. Use Grafana Explore instead to query metrics directly.
 
-| Dashboard ID | Description |
-|---|---|
-| 3070 | etcd cluster overview |
-
-**Key metrics to watch:**
+**Key metrics to explore:**
 
 ```promql
+# All 3 etcd nodes should have a leader (value=1)
+etcd_server_has_leader
+
+# etcd database size per node (~30MB in lab)
+etcd_mvcc_db_total_size_in_bytes
+
+# etcd proposal commit rate
+rate(etcd_server_proposals_committed_total[5m])
+
 # etcd leader changes (should be 0 in stable cluster)
 etcd_server_leader_changes_seen_total
 
-# etcd disk fsync latency
-histogram_quantile(0.99, etcd_disk_wal_fsync_duration_seconds_bucket)
-
 # Kamaji TCP reconciliation rate
 controller_runtime_reconcile_total{controller="tenantcontrolplane"}
+```
+
+---
+
+**Reset after demo:**
+
+```bash
+use-mgmt
+
+helm uninstall mgmt-monitoring -n monitoring
+kubectl delete namespace monitoring
+kubectl delete secret etcd-certs -n monitoring 2>/dev/null || true
+
+# Kill port-forwards
+lsof -ti:3001 | xargs kill -9 2>/dev/null || true
+lsof -ti:9092 | xargs kill -9 2>/dev/null || true
 ```
 
 ---
