@@ -89,6 +89,7 @@ else
     -v /var/lib/containerd \
     -v /var/lib/kubelet \
     -v /etc/kubernetes \
+    -v /var/lib/kube-proxy \
     "kindest/node:${K8S_VERSION}"
 
   sleep 5

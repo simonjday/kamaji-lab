@@ -102,6 +102,70 @@ function kamaji-ui() {
   echo "==> Kamaji Console: http://localhost:${PORT}/ui (admin@lab.local / admin123)"
 }
 
+function recover-worker() {
+  local TCP=${1:-tenant-demo}
+  local NS=${2:-${TCP}}
+  local WORKER=${3:-kamaji-worker-01}
+  local MGMT="${HOME}/.kube/config"
+  local TENANT_KUBECONFIG="${HOME}/.kube/${TCP}-local.kubeconfig"
+
+  echo "==> Recovering worker: ${WORKER} for TCP: ${TCP}"
+
+  # Ensure port-forward is running
+  if ! lsof -i:7443 &>/dev/null 2>&1; then
+    KUBECONFIG=${MGMT} kubectl port-forward svc/${TCP} -n ${NS}       7443:6443 --address 127.0.0.1 >/dev/null 2>&1 &
+    sleep 3
+  fi
+
+  export KUBECONFIG=${TENANT_KUBECONFIG}
+
+  # Fix conntrack configmap
+  kubectl get configmap kube-proxy -n kube-system     -o jsonpath='{.data.config\.conf}' |     sed 's/maxPerCore: null/maxPerCore: 0/' |     sed 's/min: null/min: 0/' > /tmp/kube-proxy-config.conf
+
+  kubectl create configmap kube-proxy -n kube-system     --from-file=config.conf=/tmp/kube-proxy-config.conf     --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
+
+  # Recreate kube-proxy kubeconfig
+  local CA_DATA
+  CA_DATA=$(KUBECONFIG=${MGMT} kubectl get secret ${TCP}-ca     -n ${NS} -o jsonpath='{.data.ca\.crt}')
+  local TCP_ENDPOINT
+  TCP_ENDPOINT=$(KUBECONFIG=${MGMT} kubectl get tcp ${TCP}     -n ${NS} -o jsonpath='{.status.controlPlaneEndpoint}')
+  local TOKEN
+  TOKEN=$(kubectl create token kube-proxy -n kube-system)
+
+  cat > /tmp/kube-proxy-recover.conf << EOF
+apiVersion: v1
+kind: Config
+clusters:
+- cluster:
+    certificate-authority-data: ${CA_DATA}
+    server: https://${TCP_ENDPOINT}
+  name: default
+contexts:
+- context:
+    cluster: default
+    user: kube-proxy
+  name: default
+current-context: default
+users:
+- name: kube-proxy
+  user:
+    token: ${TOKEN}
+EOF
+
+  docker exec "${WORKER}" mkdir -p /var/lib/kube-proxy
+  docker cp /tmp/kube-proxy-recover.conf     "${WORKER}:/var/lib/kube-proxy/kubeconfig.conf"
+
+  # Delete bad pods to restart clean
+  kubectl delete pod -n kube-system --all 2>/dev/null || true
+  kubectl delete pod -n kube-flannel --all 2>/dev/null || true
+  kubectl delete pod -n capsule-system --all 2>/dev/null || true
+  kubectl delete pod -n cert-manager --all 2>/dev/null || true
+
+  echo "==> Waiting for pods to recover"
+  sleep 15
+  kubectl get pods -A
+}
+
 function reset-tenant() {
   local TCP=${1:?"Usage: reset-tenant <tcp-name>"}
   rm -f "${HOME}/.kube/${TCP}.kubeconfig" "${HOME}/.kube/${TCP}-local.kubeconfig"
