@@ -430,6 +430,7 @@ sed "s|https://${BETA_EP}|https://127.0.0.1:7444|g" \
   ~/.kube/tenant-beta.kubeconfig > ~/.kube/tenant-beta-local.kubeconfig
 
 kubectl port-forward svc/tenant-beta -n tenant-beta 7444:6443 &
+sleep 3
 export KUBECONFIG=~/.kube/tenant-beta-local.kubeconfig
 kubectl get namespaces
 ```

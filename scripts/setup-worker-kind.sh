@@ -83,6 +83,7 @@ else
     --hostname "${WORKER_NAME#kamaji-}" \
     --network kind \
     --privileged \
+    --restart unless-stopped \
     --tmpfs /tmp \
     --tmpfs /run \
     -v /var/lib/containerd \
