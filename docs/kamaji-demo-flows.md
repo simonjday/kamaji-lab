@@ -651,6 +651,7 @@ lsof -ti:8888 | xargs kill -9 2>/dev/null || true
 use-tenant tenant-demo
 
 # Exempt system namespaces from Capsule tenant enforcement
+# Without this, Capsule blocks argocd namespace creation
 kubectl patch capsuleconfiguration default --type=merge -p '{
   "spec": {
     "protectedNamespaceRegex": "^(argocd|monitoring|cert-manager|capsule-system|kube-.*)$"
@@ -660,19 +661,28 @@ kubectl patch capsuleconfiguration default --type=merge -p '{
 kubectl create namespace argocd
 kubectl apply -n argocd \
   -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+# The applicationsets CRD annotation warning is harmless — ignore it
 kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 
-kubectl port-forward svc/argocd-server -n argocd 9090:443 &
 ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret \
   -o jsonpath='{.data.password}' | base64 -d)
 echo "ArgoCD password: ${ARGOCD_PASSWORD}"
+
+kubectl port-forward svc/argocd-server -n argocd 9090:443 &
+sleep 2
 open https://localhost:9090
+# Login: admin / <password above>
 ```
 
-**Create a sample app manifest in Git:**
+> **Port-forward note:** The ArgoCD UI port-forward must be started from the tenant cluster context. If you switch contexts with `use-mgmt`, the port-forward will drop. Re-run from `use-tenant tenant-demo`.
 
-```yaml
-# manifests/apps/nginx-frontend.yaml
+**Create app manifests in Git:**
+
+```bash
+mkdir -p manifests/apps/team-alpha-frontend
+
+cat > manifests/apps/team-alpha-frontend/nginx.yaml <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -695,23 +705,43 @@ spec:
           requests:
             cpu: 50m
             memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  namespace: team-alpha-frontend
+spec:
+  selector:
+    app: nginx
+  ports:
+  - port: 80
+    targetPort: 80
+EOF
+
+git add manifests/apps/
+git commit -m "Demo: add nginx app for team-alpha-frontend"
+git push
 ```
 
-**Create ArgoCD Application:**
+**Create ArgoCD Application on the tenant cluster:**
 
 ```bash
+# Ensure you are on the tenant cluster
+use-tenant tenant-demo
+
 kubectl apply -f - <<'EOF'
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: team-alpha-frontend-app
+  name: team-alpha-frontend
   namespace: argocd
 spec:
   project: default
   source:
     repoURL: https://github.com/simonjday/kamaji-lab
     targetRevision: main
-    path: manifests/apps
+    path: manifests/apps/team-alpha-frontend
   destination:
     server: https://kubernetes.default.svc
     namespace: team-alpha-frontend
@@ -720,6 +750,63 @@ spec:
       prune: true
       selfHeal: true
 EOF
+
+kubectl get applications -n argocd -w
+# Synced → Healthy
+```
+
+**Verify deployment:**
+
+```bash
+kubectl get pods -n team-alpha-frontend
+# NAME                     READY   STATUS    RESTARTS   AGE
+# nginx-xxx-1              1/1     Running   0          30s
+# nginx-xxx-2              1/1     Running   0          30s
+
+kubectl get svc -n team-alpha-frontend
+# NAME    TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+# nginx   ClusterIP   10.96.75.253   <none>        80/TCP    30s
+```
+
+**Demo — GitOps loop (scale via Git):**
+
+```bash
+# Change replicas in Git
+sed -i '' 's/replicas: 2/replicas: 3/' manifests/apps/team-alpha-frontend/nginx.yaml
+git add manifests/apps/team-alpha-frontend/nginx.yaml
+git commit -m "Demo: scale nginx to 3 replicas"
+git push
+
+# Force sync or wait up to 3 minutes
+kubectl -n argocd patch application team-alpha-frontend \
+  --type merge \
+  -p '{"operation":{"sync":{"revision":"HEAD"}}}'
+
+kubectl get pods -n team-alpha-frontend -w
+# Third pod appears automatically
+```
+
+**Reset after demo:**
+
+```bash
+use-tenant tenant-demo
+
+# Remove ArgoCD application and workloads
+kubectl delete application team-alpha-frontend -n argocd
+kubectl delete deploy nginx -n team-alpha-frontend 2>/dev/null || true
+kubectl delete svc nginx -n team-alpha-frontend 2>/dev/null || true
+
+# Uninstall ArgoCD from tenant cluster
+kubectl delete -n argocd   -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl delete namespace argocd
+
+# Kill port-forward
+lsof -ti:9090 | xargs kill -9 2>/dev/null || true
+
+# Remove app manifests from git
+git rm -r manifests/apps/team-alpha-frontend/nginx.yaml 2>/dev/null || true
+git commit -m "Demo cleanup: remove nginx app" 2>/dev/null || true
+git push 2>/dev/null || true
 ```
 
 ---
