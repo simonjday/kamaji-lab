@@ -972,13 +972,15 @@ git push 2>/dev/null || true
 
 **Goal:** Scrape worker node metrics from within the tenant cluster.
 
+> **Capsule namespace note:** The `monitoring` namespace must be exempt from Capsule enforcement. Ensure `protectedNamespaceRegex` includes `monitoring` (done in demo 7 setup).
+
 **Install kube-prometheus-stack:**
 
 ```bash
 use-tenant tenant-demo
 
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
+helm repo update prometheus-community
 
 helm install monitoring prometheus-community/kube-prometheus-stack \
   --namespace monitoring \
@@ -986,7 +988,7 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
   --set prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false \
   --set grafana.adminPassword=admin123 \
   --set alertmanager.enabled=false \
-  --wait
+  --wait --timeout=300s
 
 kubectl get pods -n monitoring
 ```
@@ -995,36 +997,63 @@ kubectl get pods -n monitoring
 
 ```bash
 kubectl port-forward svc/monitoring-grafana -n monitoring 3000:80 &
+sleep 2
 open http://localhost:3000
 # Login: admin / admin123
 ```
 
-**Useful dashboards to import:**
-
-| Dashboard ID | Description |
-|---|---|
-| 315 | Kubernetes cluster monitoring |
-| 6417 | Kubernetes pod/namespace overview |
-| 1860 | Node Exporter full |
-
-**Import via Grafana UI:** Dashboards → Import → Enter ID → Load.
-
-**Demo — show worker node metrics:**
+**Access Prometheus targets:**
 
 ```bash
-# Generate some load on worker-01
-kubectl run stress --image=progrium/stress \
-  --namespace team-alpha-frontend \
-  -- stress --cpu 1 --timeout 60
+kubectl port-forward svc/monitoring-kube-prometheus-prometheus   -n monitoring 9091:9090 &
+sleep 2
+open http://localhost:9091/targets
+# CoreDNS and kube-state-metrics targets show as UP
+```
 
-# Watch CPU spike in Grafana node dashboard
+**Useful dashboards to import:**
+
+| Dashboard ID | Description | Notes |
+|---|---|---|
+| 6417 | Kubernetes Cluster (Prometheus) | Works — shows pods, deployments, node count |
+| 315 | Kubernetes cluster monitoring | Partial — node CPU/memory N/A (Docker container limitation) |
+| 1860 | Node Exporter full | N/A in kind Docker worker setup |
+
+**Import via Grafana UI:** Dashboards → Import → Enter ID → Load → Select Prometheus datasource.
+
+> **Lab limitation:** Node-level metrics (CPU, memory, disk) show N/A because the node-exporter cannot reach the Docker container host network. Workload metrics (pods, deployments, replicas) work correctly via kube-state-metrics.
+
+**Demo — show workload metrics in Grafana (dashboard 6417):**
+
+```bash
+# Generate pod activity — scale nginx up and down
+export KUBECONFIG=~/.kube/tenant-demo-local.kubeconfig
+kubectl scale deploy nginx -n team-alpha-frontend --replicas=5
+sleep 30
+kubectl scale deploy nginx -n team-alpha-frontend --replicas=2
+
+# Watch deployment replica changes appear in Grafana
+# Dashboard 6417 → Deployments section → Deployment Replicas
 ```
 
 **Verify scraping:**
 
 ```bash
-kubectl get servicemonitors -A
-kubectl get prometheusrules -A
+kubectl get servicemonitors -n monitoring
+# Shows: coredns, kube-state-metrics, prometheus, node-exporter
+```
+
+**Reset after demo:**
+
+```bash
+use-tenant tenant-demo
+
+helm uninstall monitoring -n monitoring
+kubectl delete namespace monitoring
+
+# Kill port-forwards
+lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+lsof -ti:9091 | xargs kill -9 2>/dev/null || true
 ```
 
 ---
