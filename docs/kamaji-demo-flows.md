@@ -621,16 +621,41 @@ kubectl get tcp -A -w
 # tenant-gamma disappears
 ```
 
+**Reset after demo:**
+
+```bash
+use-mgmt
+
+# Remove the ArgoCD application
+kubectl delete application kamaji-tenants -n argocd
+
+# Uninstall ArgoCD
+kubectl delete -n argocd   -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+kubectl delete namespace argocd
+
+# Kill port-forward
+lsof -ti:8888 | xargs kill -9 2>/dev/null || true
+```
+
 ---
 
 ## 7. GitOps — ArgoCD on Tenant Cluster
 
 **Goal:** Deploy workloads to Capsule tenant namespaces from Git using ArgoCD running inside the tenant cluster.
 
+> **Capsule namespace restriction:** Capsule blocks creation of namespaces that don't match a tenant prefix. `argocd` is a system namespace and must be exempt. The Capsule `protectedNamespaceRegex` field covers namespaces that Capsule should ignore entirely.
+
 **Install ArgoCD on the tenant cluster:**
 
 ```bash
 use-tenant tenant-demo
+
+# Exempt system namespaces from Capsule tenant enforcement
+kubectl patch capsuleconfiguration default --type=merge -p '{
+  "spec": {
+    "protectedNamespaceRegex": "^(argocd|monitoring|cert-manager|capsule-system|kube-.*)$"
+  }
+}'
 
 kubectl create namespace argocd
 kubectl apply -n argocd \
@@ -892,6 +917,27 @@ histogram_quantile(0.99, etcd_disk_wal_fsync_duration_seconds_bucket)
 # Kamaji TCP reconciliation rate
 controller_runtime_reconcile_total{controller="tenantcontrolplane"}
 ```
+
+---
+
+## Worker Restart Recovery
+
+After Docker Desktop or macOS restarts, worker containers may lose runtime state (kube-proxy kubeconfig, conntrack config). Use the `recover-worker` shell helper:
+
+```bash
+# Recover tenant-demo worker
+recover-worker tenant-demo
+
+# Recover tenant-beta worker  
+recover-worker tenant-beta tenant-beta kamaji-worker-beta-01
+```
+
+This automatically:
+- Recreates the kube-proxy kubeconfig
+- Fixes the conntrack configmap
+- Deletes stuck pods to force a clean restart
+
+**Why this happens:** The `/var/lib/kube-proxy` directory was not persisted as a Docker volume in earlier worker setups. Workers created with the updated `setup-worker-kind.sh` (v2+) include `-v /var/lib/kube-proxy` and will survive restarts without needing recovery.
 
 ---
 
