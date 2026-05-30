@@ -358,6 +358,15 @@ kubectl get nodes
 
 > **Note:** The worker node continues running the previous kubelet version after a TCP upgrade. Worker node upgrades require draining the node, deleting the container, and rejoining with the new version.
 
+**Reset after demo:**
+
+```bash
+# Scale back to 1 replica
+use-mgmt
+kubectl patch tcp tenant-demo -n tenant-demo --type=merge   -p '{"spec":{"controlPlane":{"deployment":{"replicas":1}}}}'
+kubectl get pods -n tenant-demo -w
+```
+
 ---
 
 ## 5. Kamaji — Second Tenant Cluster
@@ -456,6 +465,25 @@ kubectl get nodes
 # worker-beta-01 — completely isolated
 ```
 
+**Reset after demo:**
+
+```bash
+use-mgmt
+
+# Remove worker
+./scripts/teardown.sh worker kamaji-worker-beta-01
+
+# Remove TCP and namespace
+kubectl delete tcp tenant-beta -n tenant-beta
+kubectl delete ns tenant-beta
+
+# Remove kubeconfigs
+rm -f ~/.kube/tenant-beta.kubeconfig ~/.kube/tenant-beta-local.kubeconfig
+
+# Kill port-forward
+lsof -ti:7444 | xargs kill -9 2>/dev/null || true
+```
+
 ---
 
 ## 6. GitOps — ArgoCD on Management Cluster (TCP-as-Code)
@@ -495,6 +523,8 @@ manifests/
 
 **Create an ArgoCD Application to manage all TCPs:**
 
+> **Important:** Set `destination.namespace` to `""` (empty) so ArgoCD manages TCPs across all namespaces, not just one. If set to a specific namespace, ArgoCD will only track resources in that namespace and `prune: true` won't remove TCPs in other namespaces.
+
 ```bash
 kubectl apply -f - <<'EOF'
 apiVersion: argoproj.io/v1alpha1
@@ -510,7 +540,7 @@ spec:
     path: manifests/tenants
   destination:
     server: https://kubernetes.default.svc
-    namespace: tenant-demo
+    namespace: ""
   syncPolicy:
     automated:
       prune: true
@@ -522,14 +552,73 @@ EOF
 kubectl get applications -n argocd
 ```
 
+> **Note:** Each TCP manifest needs a corresponding Namespace manifest in Git for `CreateNamespace=true` to work correctly. Create both files together:
+> ```
+> manifests/tenants/tenant-gamma-ns.yaml   # Namespace
+> manifests/tenants/tenant-gamma.yaml      # TenantControlPlane
+> ```
+
 **Demo flow:**
 
 ```bash
-# 1. Edit manifests/tenants/tenant-demo.yaml in Git — change replica count to 2
-# 2. git commit && git push
-# 3. ArgoCD detects drift and syncs within 3 minutes
-# 4. Watch TCP update
+# 1. Add namespace + TCP manifests to Git
+cat > manifests/tenants/tenant-gamma-ns.yaml <<'NSEOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-gamma
+NSEOF
+
+cat > manifests/tenants/tenant-gamma.yaml <<'TCPEOF'
+apiVersion: kamaji.clastix.io/v1alpha1
+kind: TenantControlPlane
+metadata:
+  name: tenant-gamma
+  namespace: tenant-gamma
+spec:
+  dataStore: default
+  controlPlane:
+    deployment:
+      replicas: 1
+    service:
+      serviceType: LoadBalancer
+  kubernetes:
+    version: v1.30.2
+    kubelet:
+      cgroupfs: systemd
+  networkProfile:
+    port: 6443
+    certSANs:
+      - "127.0.0.1"
+  addons:
+    coreDNS: {}
+    kubeProxy: {}
+    konnectivity:
+      server:
+        port: 8132
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+TCPEOF
+
+git add manifests/tenants/
+git commit -m "Demo: add tenant-gamma via GitOps"
+git push
+
+# 2. Watch ArgoCD provision the TCP (polls every 3 min, or force sync below)
 kubectl get tcp -A -w
+
+# Force immediate sync if needed:
+kubectl -n argocd patch application kamaji-tenants   --type merge   -p '{"operation":{"sync":{"revision":"HEAD"}}}'
+
+# 3. Remove from Git — ArgoCD prunes the TCP
+git rm manifests/tenants/tenant-gamma.yaml manifests/tenants/tenant-gamma-ns.yaml
+git commit -m "Demo: remove tenant-gamma via GitOps"
+git push
+
+kubectl get tcp -A -w
+# tenant-gamma disappears
 ```
 
 ---
