@@ -817,6 +817,50 @@ git push 2>/dev/null || true
 
 **Install ApplicationSet controller** (included in ArgoCD 2.3+, already available).
 
+> **ApplicationSet CRD note:** The `applicationsets.argoproj.io` CRD may fail to install via standard `kubectl apply` due to an annotation size limit. If you see `metadata.annotations: Too long`, install with server-side apply:
+> ```bash
+> kubectl apply -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/crds/applicationset-crd.yaml >   --server-side --force-conflicts
+> ```
+
+**Create app manifests in Git for each namespace:**
+
+```bash
+mkdir -p manifests/apps/team-alpha-backend
+mkdir -p manifests/apps/team-alpha-data
+
+cat > manifests/apps/team-alpha-backend/nginx.yaml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: team-alpha-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+EOF
+
+cp manifests/apps/team-alpha-backend/nginx.yaml manifests/apps/team-alpha-data/nginx.yaml
+sed -i '' 's/namespace: team-alpha-backend/namespace: team-alpha-data/'   manifests/apps/team-alpha-data/nginx.yaml
+
+git add manifests/apps/
+git commit -m "Demo: add apps for all team-alpha namespaces"
+git push
+```
+
 **Create the ApplicationSet:**
 
 ```bash
@@ -830,11 +874,6 @@ metadata:
   namespace: argocd
 spec:
   generators:
-  - clusters:
-      selector:
-        matchLabels: {}
-    values:
-      namespaces: team-alpha-frontend,team-alpha-backend,team-alpha-data
   - list:
       elements:
       - namespace: team-alpha-frontend
@@ -842,7 +881,7 @@ spec:
       - namespace: team-alpha-data
   template:
     metadata:
-      name: '{{namespace}}-app'
+      name: '{{namespace}}'
     spec:
       project: default
       source:
@@ -856,17 +895,76 @@ spec:
         automated:
           prune: true
           selfHeal: true
-        syncOptions:
-          - CreateNamespace=false
 EOF
 
+kubectl get applicationsets -n argocd
 kubectl get applications -n argocd
-# team-alpha-frontend-app
-# team-alpha-backend-app
-# team-alpha-data-app
+# NAME                  SYNC STATUS   HEALTH STATUS
+# team-alpha-backend    Synced        Healthy
+# team-alpha-data       Synced        Healthy
+# team-alpha-frontend   Synced        Healthy
 ```
 
-**Demo:** Add a new namespace → ArgoCD automatically creates an Application for it.
+> **Force sync if status stays Unknown:**
+> ```bash
+> kubectl -n argocd patch application team-alpha-backend >   --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'
+> kubectl -n argocd patch application team-alpha-data >   --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'
+> ```
+
+**Verify pods in all three namespaces:**
+
+```bash
+kubectl get pods -n team-alpha-frontend
+kubectl get pods -n team-alpha-backend
+kubectl get pods -n team-alpha-data
+# nginx running in each namespace
+```
+
+**Demo — add a new namespace, ApplicationSet auto-creates Application:**
+
+```bash
+# Alice creates a new namespace
+kubectl --as=alice --as-group=projectcapsule.dev create namespace team-alpha-staging
+
+# Add app manifest to Git
+mkdir -p manifests/apps/team-alpha-staging
+cp manifests/apps/team-alpha-backend/nginx.yaml manifests/apps/team-alpha-staging/nginx.yaml
+sed -i '' 's/namespace: team-alpha-backend/namespace: team-alpha-staging/'   manifests/apps/team-alpha-staging/nginx.yaml
+
+# Add to ApplicationSet generator list
+kubectl patch applicationset capsule-tenant-apps -n argocd --type=json -p '[
+  {"op": "add", "path": "/spec/generators/0/list/elements/-",
+   "value": {"namespace": "team-alpha-staging"}}
+]'
+
+git add manifests/apps/team-alpha-staging/
+git commit -m "Demo: add team-alpha-staging app"
+git push
+
+kubectl get applications -n argocd
+# team-alpha-staging Application appears automatically
+```
+
+**Reset after demo:**
+
+```bash
+use-tenant tenant-demo
+
+# Delete ApplicationSet and all generated Applications
+kubectl delete applicationset capsule-tenant-apps -n argocd
+kubectl delete application team-alpha-frontend team-alpha-backend   team-alpha-data -n argocd 2>/dev/null || true
+
+# Clean up workloads
+kubectl delete deploy nginx -n team-alpha-frontend 2>/dev/null || true
+kubectl delete deploy nginx -n team-alpha-backend 2>/dev/null || true
+kubectl delete deploy nginx -n team-alpha-data 2>/dev/null || true
+kubectl delete svc nginx -n team-alpha-frontend 2>/dev/null || true
+
+# Remove app manifests from git
+git rm -r manifests/apps/ 2>/dev/null || true
+git commit -m "Demo cleanup: remove app manifests" 2>/dev/null || true
+git push 2>/dev/null || true
+```
 
 ---
 
